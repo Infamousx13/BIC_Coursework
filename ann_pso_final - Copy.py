@@ -4,11 +4,12 @@ import copy
 #Particle Class
 class Particle:
     #Initialize Particle
-    def __init__(self, position, num_weights):
-        self.position = position
+    def __init__(self, weights, num_weights):
+        self.best_weights = weights
+        self.position = np.random.rand(num_weights)
         self.velocity = np.random.rand(num_weights)
         self.best_position = copy.copy(self.position)
-        self.best_fitness = float('-inf')
+        self.particle_fitness = float('-inf')
 
 # Neural Network class
 class NeuralNetwork:
@@ -23,7 +24,7 @@ class NeuralNetwork:
         weights = [np.random.uniform(-1, 1, (self.layer_sizes[i-1], self.layer_sizes[i])) for i in range(self.layers)]
         return weights
     #Forward Pass
-    def forward_pass(self, X):
+    def forward_pass(self, X, y):
         layer_output = X
         for i in range(self.layers-1):
             if layer_output.shape[1] != self.weights[i].shape[0]:
@@ -33,7 +34,8 @@ class NeuralNetwork:
             if i != 0:
                 layer_output = self.apply_activation(layer_input, self.activations[i])
         layer_output = self.apply_activation(layer_output, self.activations[-1])
-        return layer_output
+        loss = self.loss(y, layer_output)
+        return layer_output, loss
     #Activation Functions
     def apply_activation(self, x, activation):
         if activation == 'tanh':
@@ -65,43 +67,52 @@ class NeuralNetwork:
         return np.mean((y_t - y_p) ** 2)
 
 # Particle Swarm Optimizer: based on pseudocode in Essentials of Metaheuristics, P7
-def particle_swarm_optimizer(nn, num_particles, num_iterations, alpha, beta, gamma, delta, jump_size):
+def particle_swarm_optimizer(nn, num_particles, num_iterations, alpha, beta, gamma, delta, jump_size, loss):
     #Weights sent as particles
     num_weights = sum(np.prod(nn.weights[i].shape) for i in range(len(nn.weights)))
     particles = [Particle(nn.get_weights(), num_weights) for _ in range(num_particles)]
     #Global Bests taken
-    global_best_position = np.concatenate([np.random.uniform(-1, 1, size=np.prod(nn.weights[i].shape))for i in range (nn.layers)])
-    global_best_fitness = float('-inf')
+    global_best_position = None
+    global_best_fitness = None
     #Beginning loop
     while (num_iterations !=0) :
         for particle in particles:
-            current_fitness = np.sum(np.square(particle.position))
-            if current_fitness > particle.best_fitness:
-                particle.best_fitness = current_fitness
-                particle.best_position = copy.copy(particle.position)
+            particle.particle_fitness = loss
+            if (global_best_fitness == None) or (particle.particle_fitness > global_best_fitness):
+                weight = particle.best_weights
+                global_best_fitness = particle.particle_fitness
+                global_best_position = particle.position
+                #print("Temp GBP: ", global_best_position)
+            #if current_fitness > particle.best_fitness:
+                #print("Temp1 Fitness", current_fitness)
+                #particle.best_fitness = current_fitness
+                #particle.best_position = copy.copy(particle.position)
                 #particle.best_position = particle.position.copy()
-            if current_fitness > global_best_fitness:
-                global_best_fitness = current_fitness
-                global_best_position = copy.copy(particle.position)
+            #if current_fitness > global_best_fitness:
+                #print("Temp2 Fitness: ", current_fitness)
+                #global_best_fitness = current_fitness
+                #global_best_position = copy.copy(particle.position)
                 #global_best_position = particle.position.copy()
         for particle in particles:
             best_particle = particle.best_position
             if (len(particle.position)):
-                best_info_index = np.random.choice(len(particle.position))
-                best_informant = particle.position[best_info_index]
+                best_info_index = np.random.choice(len(particle.position), 3)
+                best_informant = np.concatenate([particle.position[x] for x in best_info_index])
             else: 
                 best_informant = particle.position
             best_any = global_best_position
-            for particle in particles:
+            dims = len(particles)
+            for i in range(0,dims):
                 b = np.random.uniform(0.0, beta)
                 c = np.random.uniform(0.0, gamma)
                 d = np.random.uniform(0.0, delta)
-                particle.velocity = alpha * particle.velocity + b*(best_particle - particle.position) + c*(best_informant - particle.position) + d * (best_any - particle.position)
+                particle.velocity[i] = alpha * particle.velocity[i] + b*(best_particle[i] - particle.position[i]) + c*(best_informant[i] - particle.position[i]) + d * (best_any[i] - particle.position[i])
         for particle in particles:        
             particle.position += jump_size * particle.velocity
         num_iterations -=1
-    print("Global best position: ",global_best_position)
-    return global_best_position
+    #print("Global best position: ",global_best_position)
+    print("Weights: ", weight)
+    return weight
 
 def main():
     #Data loaded and preprocess
@@ -124,8 +135,8 @@ def main():
     activation = []
     for i in range(layers):
         layer_size.append(int(input(f"Enter the number of neurons in hidden layer {i+1}: ")))
-        activation.append(input(f"Enter the activation function for the layer - sigmoid, tanh, relu, softmax {i+1}: "))
-    activation.append(input(f"Enter the activation function for the output layer - sigmoid, tanh, relu, softmax: "))
+        activation.append(input(f"Enter the activation function for this layer - sigmoid, tanh, relu: "))
+    activation.append(input(f"Enter the activation function for the output layer - sigmoid, tanh, relu: "))
     nn = NeuralNetwork(layer_sizes=layer_size, activations=activation)
 
     print("\n<<<<<<<<<<<<<<Particle Swarm>>>>>>>>>>>>>>>\n")
@@ -139,21 +150,45 @@ def main():
 
     num_particles = 50
     num_iterations = 50
-    alpha = 0.5
-    beta = 1.5
-    gamma = 1.5
-    delta = 1.0
-    jump_size = 0.5
+    alpha = 0.9
+    beta = 2.0
+    gamma = 2.0
+    delta = 0
+    jump_size = 1
 
     epochs = int(input("Enter the number of epochs: "))
     for epoch in range(epochs):
         print (f"Epoch {epoch + 1}/{epochs}")
-        nn.forward_pass(X_train)
-        best_weights = particle_swarm_optimizer(nn, num_particles, num_iterations, alpha, beta, gamma, delta, jump_size)
+        y_pred_train, loss = nn.forward_pass(X_train, y_train)
+        best_weights = particle_swarm_optimizer(nn, num_particles, num_iterations, alpha, beta, gamma, delta, jump_size, loss)
         nn.update_weights(best_weights)
-        y_pred = nn.predict(X_test)
-        y_hat = np.abs((y_pred > 0.5).astype(int))
-        loss = nn.loss(y_test, y_hat)
-        print("Loss =", loss)
-        accuracy = np.mean(y_test==y_hat)
-        print("Accuracy in this epoch = {:.2%}".format(accuracy))
+        y_hat = np.abs((y_pred_train > 0.5).astype(int))
+        print("Training Loss =", loss)
+        accuracy = np.mean(y_train==y_hat)
+        print("Training accuracy in this epoch = {:.2%}".format(accuracy))
+        tp = np.sum(((y_train == 1)) & (y_pred_train == 1))
+        fp = np.sum(((y_train == 0)) & (y_pred_train == 1))
+        fn = np.sum(((y_train == 1)) & (y_pred_train == 0))
+        precision = ((tp/tp+fp) if (tp + fp != 0) else 0)
+        print("Precision: ", precision)
+        recall = ((tp/tp+fn) if (tp+fn != 0 ) else 0)
+        print("Recall: ", recall)
+        f1score = ((2*(precision*recall)/(precision*recall) if precision+recall !=0 else 0))
+        print("F1 Score: ", f1score)
+    y_pred_test, lossx = nn.forward_pass(X_test, y_test)
+    y_hatt = np.abs((y_pred_test > 0.5).astype(int))
+    print("Testing Loss =", lossx)
+    accuracyfinal = np.mean(y_test==y_hatt)
+    print (np.vstack(y_hatt))
+    print("Test accuracy = {:.2%}".format(accuracyfinal))
+    tpfin = np.sum(((y_train == 1)) & (y_pred_train == 1))
+    fpfin = np.sum(((y_train == 0)) & (y_pred_train == 1))
+    fnfin = np.sum(((y_train == 1)) & (y_pred_train == 0))
+    precision_fin = ((tpfin/tpfin+fpfin) if (tpfin + fpfin != 0) else 0)
+    print("Precision: ", precision_fin)
+    recall_fin = ((tpfin/tpfin+fnfin) if (tpfin+fnfin != 0 ) else 0)
+    print("Recall: ", recall_fin)
+    f1score_fin = ((2*(precision_fin*recall_fin)/(precision_fin*recall_fin) if (precision_fin+recall_fin) !=0 else 0))
+    print("F1 Score: ", f1score_fin)
+if __name__ == "__main__":
+    main()
